@@ -1,0 +1,143 @@
+## AI services
+
+kind: Service
+apiVersion: v1
+metadata:
+  name: aiagent-api-svc
+spec:
+  selector:
+    app: aiagent-api
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: aiagent-api-ingress-01
+  annotations:
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/use-private-ip: "true"
+spec:
+  rules:
+    - host: aiagent-api.infragenai.akersolutions.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: aiagent-api-svc
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - aiagent-api.infragenai.akersolutions.com
+      secretName: akso-tls-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aiagent-api-secret
+type: Opaque
+stringData:
+  # Configuration values only - actual secrets fetched from Azure Key Vault via init container
+  STORAGE_BUCKET_NAME: "stinfragenaidev001"
+  ENVIRONMENT: DEV
+  RAG_PERSIST_DIR: ""
+  QDRANT_API_KEY: ""
+  QDRANT_URI: ""
+  CONTAINER_NAME: "knowledgebaseinfragenai-dev"
+  PORTKEY_API_KEY: ""
+  REDIS_CLIENT_URL: ""
+  REDIS_CLIENT_PORT: "6379"
+  REDIS_CLIENT_DB: "0"
+  CLIENT_ID: ""
+  AUTHORITY: "https://login.microsoftonline.com"
+  TENANT_ID: ""
+  APP_ID: ""
+  EMAIL_CLIENT_ID: ""
+  EMAIL_TENANT_ID: ""
+  USER_EMAIL: ""
+  TAVILY_API_KEY: ""
+  POSTCALL_WEBHOOK_URL: "http://backend-api-svc.default.svc.cluster.local/webhook/intake"
+  RECALLAI_API_URL: ""
+  COPILOT_PUBLIC_URL: "ws://copilot-api-svc.default.svc.cluster.local"
+  COPILOT_BACKEND_URL: "http://copilot-api-svc.default.svc.cluster.local"
+  BACKEND_URL: "http://backend-api-svc.default.svc.cluster.local"
+  AWS_REGION: ""
+  LANCE_DB_URI: "az://kb-index"
+  VECTOR_STORE_NAME: "pgvector"
+  LLM_PROVIDER: "openai_gpt4"
+  AZURE_STORAGE_ACCOUNT_NAME: "stinfragenaidev001"
+  AZURE_LANGUAGE_ENDPOINT: ""
+  UPTRACE_DSN: ""
+  OPENLIT_OTLP_ENDPOINT: ""
+  BACKEND_AUTH_ALGORITHM: "HS256"
+  AZURE_OPENAI_ENDPOINT: "https://oai-infragenai-dev-001.openai.azure.com/"
+  AZURE_OPENAI_API_VERSION: "2024-12-01-preview"
+  LLM_V2_PROVIDER: "azure_openai"
+  KNOWLEDGEASSIST_CREATE_KB_MAX_TOKENS: "10000"
+  OPENAI_REALTIME_URL: "wss://api.openai.com/v1/realtime"
+  OPENAI_REALTIME_MODEL: "gpt-4o-realtime-preview-2024-12-17"
+  EMBEDDING_DIMENSIONS: "1024"
+  USE_V2_COLLECTIONS: "true"
+  TICKETING_VECTOR_INDEX_BLOB_NAMES: "akso_ticket_indexer.zip"
+  KNOWLEDGEASSIST_KB_CLUSTERING_THRESHOLD: "1"
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aiagent-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aiagent-api
+  template:
+    metadata:
+      labels:
+        app: aiagent-api
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: aks-infragenai-dev-default-sa
+      containers:
+        - name: aiagent-api
+          image: fpaiopsprod.azurecr.io/ai:934a3ce
+          ports:
+            - name: http
+              containerPort: 80
+          args:
+            [
+              "/bin/sh",
+              "-c",
+              "uvicorn service_desk.api.api:app --host 0.0.0.0 --port 80 --log-level debug --timeout-keep-alive 65",
+            ]
+          envFrom:
+            - secretRef:
+                name: aiagent-api-secret
+            - secretRef:
+                name: akso-keyvault-secrets
+          resources:
+            requests:
+              memory: 4000Mi
+            limits:
+              memory: 8000Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+              scheme: HTTP
+            initialDelaySeconds: 60
+            timeoutSeconds: 5
+            periodSeconds: 15
+            successThreshold: 1
+            failureThreshold: 5
+      imagePullSecrets:
+        - name: acr-secret
